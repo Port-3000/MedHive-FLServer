@@ -1,0 +1,30 @@
+# fl_server/requirements.txt
+
+# Core FL Framework
+flwr>=1.6,<2.0  # Flower library
+
+# Web Framework & Server (Optional, if using FastAPI for control)
+fastapi>=0.100,<0.112
+uvicorn[standard]>=0.20,<0.30
+
+# Database Interaction
+supabase>=1.0,<2.0       # Official Supabase Python client
+python-dotenv>=1.0,<2.0  # For loading .env files
+
+# ML & Data Handling
+scikit-learn>=1.2,<1.6   # For ML models (if server evaluates) & potential helpers
+pandas>=1.5,<2.3         # For data manipulation (metadata, potentially data loading)
+numpy>=1.22,<1.27        # Fundamental package for numerical computing
+
+# Experiment Tracking
+mlflow>=2.0,<2.14        # For logging to MLflow Tracking Server
+
+# Model Serialization (if saving models directly, MLflow handles much of this)
+joblib>=1.2,<1.5         # Often used with scikit-learn models
+# fl_server/requirements.txt
+
+
+
+# GUI Framework
+#toga>=0.5           # BeeWare UI toolkit (Core)
+# Note: You'll need a platform-specific backend (see install command below)
