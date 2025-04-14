@@ -41,8 +41,8 @@ except Exception as e:
     print(f"Error setting up MLflow experiment: {e}")
     experiment_id = None
 
-current_fl_round_id = None
-current_model_id = None
+current_fl_round_id = 10
+current_model_id = 69
 
 # Custom Strategy to handle MLflow logging and Supabase updates
 class FedLinearRegressionStrategy(FedAvg):
@@ -284,7 +284,7 @@ def start_fl_server(num_rounds: int = 3):
 
         # Start Flower server
         history = fl.server.start_server(
-            server_address="0.0.0.0:8081",  # Changed port to 8081
+            server_address="0.0.0.0:8089",  # Changed port to 8081
             config=fl.server.ServerConfig(num_rounds=num_rounds),
             strategy=strategy,
         )
@@ -326,18 +326,3 @@ def start_fl_server(num_rounds: int = 3):
                 print("Failed to save final model.")
         else:
             print("No final parameters available to save.")
-
-# --- FastAPI App (Optional - can integrate Flower start or run separately) ---
-# from fastapi import FastAPI
-# app = FastAPI()
-
-# @app.post("/start_fl")
-# async def trigger_fl_training(rounds: int = 3):
-#     # Could run start_fl_server in a background task
-#     print(f"Received request to start FL training for {rounds} rounds.")
-#     # In a real scenario, use background tasks (e.g., Celery, asyncio.create_task)
-#     # For simplicity, running directly here (blocks the request)
-#     start_fl_server(num_rounds=rounds)
-#     return {"message": "Federated Learning process initiated."}
-
-# # Add other API endpoints as needed (e.g., get status, list models)

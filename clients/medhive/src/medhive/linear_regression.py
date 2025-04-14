@@ -5,6 +5,14 @@ from typing import List, Tuple
 
 def get_params(model: LinearRegression) -> List[np.ndarray]:
     """Gets model parameters as a list of NumPy ndarrays."""
+    # Check if model has been fitted
+    if not hasattr(model, 'coef_'):
+        # Return empty arrays with correct shapes if model hasn't been trained
+        n_features = 1  # Default, will be properly set when trained
+        if hasattr(model, 'n_features_in_'):
+            n_features = model.n_features_in_
+        return [np.zeros(n_features), np.array([0.0])] if model.fit_intercept else [np.zeros(n_features)]
+        
     if model.fit_intercept:
         # Ensure coef_ is 2D for consistency if needed, though 1D is fine for LinearRegression
         # coef = model.coef_.reshape(1, -1) if model.coef_.ndim == 1 else model.coef_

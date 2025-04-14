@@ -32,7 +32,7 @@ class MedHive(QtWidgets.QMainWindow):
         server_layout = QtWidgets.QHBoxLayout()
         server_label = QtWidgets.QLabel("FL Server Address:")
         server_label.setMinimumWidth(150)
-        self.server_input = QtWidgets.QLineEdit("localhost:8080")
+        self.server_input = QtWidgets.QLineEdit("localhost:8089")
         server_layout.addWidget(server_label)
         server_layout.addWidget(self.server_input)
         
