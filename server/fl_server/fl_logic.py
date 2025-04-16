@@ -17,6 +17,9 @@ from .database import (
     get_active_model_info
 )
 import pickle # Or joblib
+from .data_utils import load_and_preprocess_data, partition_data
+from .logistic_regression import get_params, set_params, test as test_model
+from sklearn.linear_model import LogisticRegression
 
 load_dotenv()
 
@@ -44,6 +47,33 @@ except Exception as e:
 current_fl_round_id = 10
 current_model_id = 69
 
+# --- Data Loading and Partitioning ---
+# Path to your data file (update as needed)
+DATA_PATH = os.environ.get("SERVER_DATA_PATH", "data/data.csv")
+NUM_CLIENTS = MIN_CLIENTS_PER_ROUND
+X_train, X_test, y_train, y_test = load_and_preprocess_data(DATA_PATH)
+train_partitions = partition_data(X_train, y_train, NUM_CLIENTS)
+
+# --- Initialize server-side model with correct shape ---
+# Fit on a single batch to set coef_ and intercept_ shapes
+if X_train.shape[0] > 0:
+    server_init_model = LogisticRegression()
+    # Use at least one sample from each class if possible
+    unique_classes = np.unique(y_train)
+    if len(unique_classes) > 1:
+        # Take one sample from each class for fitting
+        idxs = []
+        for cls in unique_classes:
+            idxs.append(np.where(y_train == cls)[0][0])
+        X_init = X_train[idxs]
+        y_init = y_train[idxs]
+    else:
+        X_init = X_train[:1]
+        y_init = y_train[:1]
+    server_init_model.fit(X_init, y_init)
+else:
+    server_init_model = LogisticRegression()
+
 # Custom Strategy to handle MLflow logging and Supabase updates
 class FedLinearRegressionStrategy(FedAvg):
     def __init__(self, *args, **kwargs):
@@ -51,12 +81,13 @@ class FedLinearRegressionStrategy(FedAvg):
         self.current_server_round = 0
         self.active_model_info = get_active_model_info(MODEL_NAME, MODEL_VERSION)
         if self.active_model_info:
-             global current_model_id
-             current_model_id = self.active_model_info['id']
+            global current_model_id
+            current_model_id = self.active_model_info['id']
         else:
-             # Handle case where no active model exists (e.g., create one or fail)
-             print(f"CRITICAL: No active model found for {MODEL_NAME} v{MODEL_VERSION} in Supabase.")
-             current_model_id = None # Or raise error
+            print(f"CRITICAL: No active model found for {MODEL_NAME} v{MODEL_VERSION} in Supabase.")
+            current_model_id = None
+        # Store partition info for each round
+        self.train_partitions = train_partitions
 
     def configure_fit(
         self, server_round: int, parameters: Parameters, client_manager: fl.server.client_manager.ClientManager
@@ -67,8 +98,8 @@ class FedLinearRegressionStrategy(FedAvg):
         global current_model_id
 
         if not current_model_id:
-             print("Skipping round: No active model ID.")
-             return []
+            print("Skipping round: No active model ID.")
+            return []
 
         # Create FL Round entry in Supabase for this new round
         current_fl_round_id = create_fl_round_in_db(current_model_id, server_round)
@@ -81,27 +112,22 @@ class FedLinearRegressionStrategy(FedAvg):
 
         # Start MLflow run for the round
         with mlflow.start_run(run_name=f"FL_Round_{server_round}", nested=True) as run:
-             mlflow.log_param("round_number", server_round)
-             mlflow.log_param("fl_round_db_id", current_fl_round_id)
-             mlflow.log_param("model_db_id", current_model_id)
-             mlflow.log_param("strategy", "FedAvg") # Or self.__class__.__name__
-             mlflow.set_tag("mlflow.runName", f"FL_Round_{server_round}") # Ensure name sticks
+            mlflow.log_param("round_number", server_round)
+            mlflow.log_param("fl_round_db_id", current_fl_round_id)
+            mlflow.log_param("model_db_id", current_model_id)
+            mlflow.log_param("strategy", "FedAvg") # Or self.__class__.__name__
+            mlflow.set_tag("mlflow.runName", f"FL_Round_{server_round}") # Ensure name sticks
 
-        # Standard FedAvg client selection and configuration
-        config = {}
-        if self.on_fit_config_fn is not None:
-            config = self.on_fit_config_fn(server_round)
-
-        # Add data partitioning info here based on your strategy (see questions)
-        # Example: Tell clients which dataset ID and maybe row range/filter to use
-        config["data_instruction"] = {"dataset_id": 1, "partition_method": "modulus"} # Placeholder
-
-        fit_ins = fl.common.FitIns(parameters, config)
+        # Assign each client a partition index
         clients = client_manager.sample(
             num_clients=self.min_fit_clients, min_num_clients=self.min_available_clients
         )
-        # TODO: Update fl_participants table in Supabase for selected clients ('invited' or 'accepted')
-        return [(client, fit_ins) for client in clients]
+        fit_ins_list = []
+        for idx, client in enumerate(clients):
+            config = {"partition_index": idx}
+            fit_ins = fl.common.FitIns(parameters, config)
+            fit_ins_list.append((client, fit_ins))
+        return fit_ins_list
 
     def aggregate_fit(
         self,
@@ -120,10 +146,10 @@ class FedLinearRegressionStrategy(FedAvg):
         with mlflow.start_run(run_id=mlflow.active_run().info.run_id, nested=True): # Re-open parent round run
             total_num_examples = sum([fit_res.num_examples for _, fit_res in results])
             for _, fit_res in results:
-                 if fit_res.metrics:
-                     # Log individual client metrics if desired (can get verbose)
-                     # mlflow.log_metrics({f"client_{fit_res.cid}_loss": fit_res.metrics.get("loss", 0)}, step=server_round)
-                     pass # Decide if needed
+                if fit_res.metrics:
+                    # Log individual client metrics if desired (can get verbose)
+                    # mlflow.log_metrics({f"client_{fit_res.cid}_loss": fit_res.metrics.get("loss", 0)}, step=server_round)
+                    pass # Decide if needed
 
             # Aggregate metrics (simple average here, could be weighted)
             aggregated_loss = np.mean([fit_res.metrics.get("loss", 0.0) for _, fit_res in results if fit_res.metrics])
@@ -147,7 +173,7 @@ class FedLinearRegressionStrategy(FedAvg):
     ) -> Tuple[Optional[float], Dict[str, Scalar]]:
         """Aggregate evaluation results."""
         if not results:
-             # Potentially update round status to failed in Supabase if eval was mandatory
+            # Potentially update round status to failed in Supabase if eval was mandatory
             return None, {}
 
         # Aggregate loss using weighted average logic from Flower base strategy
@@ -185,26 +211,25 @@ class FedLinearRegressionStrategy(FedAvg):
         self, server_round: int, parameters: Parameters
     ) -> Optional[Tuple[float, Dict[str, Scalar]]]:
         """Evaluate model parameters using an evaluation function."""
-        # Server-side evaluation (optional, requires server having test data)
-        # If you rely solely on client evaluation, return None
         print(f"--- Evaluating global model after round {server_round} ---")
-        # Example: Load a central test set, create model, evaluate
-        # try:
-        #     model = set_params(LinearRegression(), parameters_to_ndarrays(parameters))
-        #     loss, accuracy = test_model(model, X_test_server, y_test_server) # Your test function
-        #     with mlflow.start_run(run_id=mlflow.active_run().info.run_id, nested=True):
-        #         mlflow.log_metric("server_eval_loss", loss, step=server_round)
-        #         mlflow.log_metric("server_eval_accuracy", accuracy, step=server_round)
-        #     # Log to Supabase model_performance
-        #     if current_model_id and current_fl_round_id:
-        #          log_model_performance(current_model_id, current_fl_round_id, {"loss": loss, "accuracy": accuracy}, test_dataset_id=YOUR_TEST_SET_ID)
-        #     return loss, {"accuracy": accuracy}
-        # except Exception as e:
-        #     print(f"Server-side evaluation failed: {e}")
-        #     return None
-
-        # If evaluation is done by clients via configure_evaluate, return None here
-        return None
+        try:
+            # Convert parameters to numpy arrays and set to a LogisticRegression model
+            param_ndarrays = parameters_to_ndarrays(parameters)
+            model = LogisticRegression()
+            model = set_params(model, param_ndarrays)
+            loss, accuracy, precision, recall, f1 = test_model(model, X_test, y_test)
+            with mlflow.start_run(run_id=mlflow.active_run().info.run_id, nested=True):
+                mlflow.log_metric("server_eval_loss", loss, step=server_round)
+                mlflow.log_metric("server_eval_accuracy", accuracy, step=server_round)
+                mlflow.log_metric("server_eval_precision", precision, step=server_round)
+                mlflow.log_metric("server_eval_recall", recall, step=server_round)
+                mlflow.log_metric("server_eval_f1", f1, step=server_round)
+            if current_model_id and current_fl_round_id:
+                log_model_performance(current_model_id, current_fl_round_id, {"loss": loss, "accuracy": accuracy, "precision": precision, "recall": recall, "f1": f1}, test_dataset_id=None)
+            return loss, {"accuracy": accuracy, "precision": precision, "recall": recall, "f1": f1}
+        except Exception as e:
+            print(f"Server-side evaluation failed: {e}")
+            return None
 
 # --- Helper Functions for Parameter Conversion (for Scikit-learn) ---
 def ndarrays_to_parameters(ndarrays: List[np.ndarray]) -> Parameters:
@@ -232,7 +257,7 @@ def save_model_mlflow(model_params: List[np.ndarray], server_round: int):
 
     # Log as artifact in the current round's MLflow run
     try:
-         with mlflow.start_run(run_id=mlflow.active_run().info.run_id, nested=True): # Re-open parent round run
+        with mlflow.start_run(run_id=mlflow.active_run().info.run_id, nested=True): # Re-open parent round run
             mlflow.log_artifact(model_path, artifact_path="model_parameters")
             print(f"Model parameters for round {server_round} saved to MLflow artifact.")
 
@@ -294,9 +319,9 @@ def start_fl_server(num_rounds: int = 3):
 
         # Log final aggregated metrics from history if needed
         if history.losses_distributed:
-             mlflow.log_metric("final_avg_loss_distributed", np.mean(history.losses_distributed))
+            mlflow.log_metric("final_avg_loss_distributed", np.mean(history.losses_distributed))
         if history.metrics_distributed.get("accuracy"): # If accuracy was aggregated
-             mlflow.log_metric("final_avg_accuracy_distributed", np.mean(history.metrics_distributed["accuracy"]))
+            mlflow.log_metric("final_avg_accuracy_distributed", np.mean(history.metrics_distributed["accuracy"]))
 
         # --- Final Model Saving ---
         # Get the final aggregated parameters from the strategy if available

@@ -2,6 +2,7 @@
 import numpy as np
 import os
 from dotenv import load_dotenv
+from typing import Dict, Tuple
 
 # Attempt to load dotenv, but don't fail if .env file doesn't exist
 try:
@@ -46,4 +47,10 @@ def get_client_data(instruction: dict, client_id: str):
     y = X @ coefficients + intercept + np.random.randn(num_samples) * 0.5
     
     print(f"Client {client_id}: Generated {num_samples} training samples")
+    return X, y
+
+def get_client_data_from_partition(data_instruction: dict) -> Tuple[np.ndarray, np.ndarray]:
+    # The server sends the partition as a dict with 'X' and 'y' as lists
+    X = np.array(data_instruction['X'])
+    y = np.array(data_instruction['y'])
     return X, y
