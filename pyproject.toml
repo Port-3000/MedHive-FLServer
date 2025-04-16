@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "test"
+version = "1.0.0"
+description = ""
+license = "Apache-2.0"
+dependencies = [
+    "flwr[simulation]>=1.17.0",
+    "flwr-datasets[vision]>=0.5.0",
+    "scikit-learn>=1.6.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.flwr.app]
+publisher = "ani"
+
+[tool.flwr.app.components]
+serverapp = "only_this_was_working.server_app:app"
+clientapp = "only_this_was_working.client_app:app"
+
+[tool.flwr.app.config]
+num-server-rounds = 1
+penalty = "l2"
+local-epochs = 1000
+
+[tool.flwr.federations]
+default = "local-simulation"
+
+[tool.flwr.federations.local-simulation]
+options.num-supernodes = 5
